@@ -1,0 +1,143 @@
+#!/usr/local/bin/python3
+#
+# Based on the Plex's media preparation documentation:
+# https://support.plex.tv/hc/en-us/articles/200220687-Naming-Series-Season-Based-TV-Shows
+# 
+# The provided files are expected to already have some kind of sequential
+# numbering. This could be numbering from a previous naming convention (e.g.
+# "atla_1x01.m4v"), or some generic sequencer like "Episode 1.m4v", "Episode
+# 2.m4v", etc. Whatever the case, the last provided numerical value in the
+# file name will be used as the episode number. __Take caution if your
+# preexisting naming convention has episode titles following the episode
+# number__; if that title happened to have a number in it, that number would
+# be taken as the episode number instead.
+# 
+# This script assumes all provided files are single episodes only, multi-
+# episode file detection is not currently supported, and they're be treated as
+# a single episode during the rename process instead of two (or more). To
+# handle multi-episode files will require either a different script or a
+# manual fix.
+# 
+# `Optional_Info` fetching (the episode title) is not supported, so the
+# renamed files will not include the episode title. The files will be named
+# generically ("Cowboy Bebop s01e01.m4v", etc.)
+# 
+# This script is untested in Windows, works in macOS, and will almost
+# certainly work for most Linux distros.
+
+import sys
+import argparse
+import re
+import os
+
+# ARGUMENT PARSING
+###############################################################################
+
+parser = argparse.ArgumentParser(description="Sequentially standardizes the provided Series or Season based TV show episodes to Plex's preferred naming convention. See https://support.plex.tv/hc/en-us/articles/200220687-Naming-Series-Season-Based-TV-Shows for more.")
+parser.add_argument("-v", "--verbose", required=False, action="store_const", const=True, default=False, help="increase verbosity")
+parser.add_argument("-t", "--title", required=True, action="store", dest="title", metavar="\"Show Title\"", help="title of show to serve as episode base name (e.g. provide \"Cowboy Bebop\" for \"Cowboy Bebop - s01e01.m4v\", etc.)")
+parser.add_argument("-i", "--input", required=True, action="store", dest="inputFiles", nargs='+', metavar=('episode1', 'episode2'), help="list of files or directories to standardize. Directory traversal it not recursive.")
+args = parser.parse_args()
+
+# PRELIMINARY SCAN OF PROVIDED FILES OR DIRECTORIES
+###############################################################################
+
+def log(message):
+	if args.verbose:
+		print(message)
+def tryint(s):
+	try:
+		return int(s)
+	except:
+		return s
+def alphanumKey(s):
+	# This was the original solution shared by Daniel
+	# 
+	# return [ tryint(c) for c in re.split('([0-9]+)', s) ]
+	# https://stackoverflow.com/a/4623518/3293952
+	#   
+	# The problem is, this returns the very first successfully converted int,
+	# which under most circumstances is fine, but falls apart if there's a
+	# number in the show title. Since the sequential numbering of files, by
+	# convention, is the very last part of the file name (before the
+	# extension), we should only return the *very last* successfully converted
+	# integer as the alphanum key.
+	key = 0
+	for c in re.split("([0-9]+)", s):
+		converted = tryint(c)
+		if isinstance(converted, int):
+			key = converted
+	return key
+inputDirectories = []
+inputFiles = []
+for file in args.inputFiles:
+	if os.path.isfile(file):
+		log("Arugment \"{}\" is a file.".format(file))
+		inputFiles.append(file)
+	elif os.path.isdir(file):
+		log("Arugment \"{}\" is a directory.".format(file))
+		inputDirectories.append(file)
+	else:
+		print("\"%s\" is not a file or directory, skipping...")
+
+if inputDirectories and inputFiles:
+	print("A mixture of directories containing episodes and individual episodes were provided. Please only supply numbered season directories containing episodes to standardize OR individual episodes (which are assumed to then be a single first season show)")
+	sys.exit(1)
+inputFiles.sort(key=alphanumKey)
+
+# MAP FILES PATHS (EPISODES) BY SEASON
+###############################################################################
+
+seasonToRelativeFilePathMap = {}
+def walklevel(some_dir, level=1):
+	some_dir = some_dir.rstrip(os.path.sep)
+	assert os.path.isdir(some_dir)
+	num_sep = some_dir.count(os.path.sep)
+	for root, dirs, files in os.walk(some_dir):
+		yield root, dirs, files
+		num_sep_this = root.count(os.path.sep)
+		if num_sep + level <= num_sep_this:
+			del dirs[:]
+if inputDirectories:
+	for directory in inputDirectories:
+		for root, directories, files in walklevel(directory, level=0):
+			season = alphanumKey(root)
+			seasonEpisodes = []
+			for file in files:
+				log("Mapping file \"{} \" to season {}".format(file, season))
+				seasonEpisodes.append(os.path.join(root, file))
+			seasonToRelativeFilePathMap[season] = seasonEpisodes
+elif inputFiles:
+	log("Mapping all specified files to season 1")
+	seasonToRelativeFilePathMap[1] = inputFiles
+
+# CONSTRUCT RENAME MAP (OLD PATH -> NEW PATH)
+###############################################################################
+
+renameMap = {}
+def getNewFileName(title, season, episode):
+	paddedSeason = str(season).zfill(2)
+	paddedEpisode = str(episode).zfill(2)
+	return "{} - s{}e{}".format(title, paddedSeason, paddedEpisode)
+def getNewRelativeFilePath(oldRelativeFilePath, newFileName, fileExtension):
+	relativeParentDirectoryPath = os.path.dirname(oldRelativeFilePath)
+	trailingSlash = "/"
+	if not relativeParentDirectoryPath:
+		trailingSlash = ""
+	return "{}{}{}{}".format(relativeParentDirectoryPath, trailingSlash, newFileName, fileExtension)
+for season, episodes in seasonToRelativeFilePathMap.items():
+	episode = 1
+	for file in episodes:
+		oldFilename, fileExtension = os.path.splitext(file)
+		newFileName = getNewFileName(args.title, season, episode)
+		newRelativeFilePath = getNewRelativeFilePath(file, newFileName, fileExtension)
+		renameMap[file] = newRelativeFilePath
+		log("Will rename \"{}\" -> \"{}\"...".format(file, newRelativeFilePath))
+		episode += 1
+
+# EXECUTE RENAMES
+###############################################################################
+
+for originalFilePath, newFilePath in renameMap.items():
+	os.rename(originalFilePath, newFilePath)
+	log("Renamed \"{}\" -> \"{}\"...".format(originalFilePath, newFilePath))
