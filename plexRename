@@ -11,7 +11,7 @@ import os
 ###############################################################################
 
 parser = argparse.ArgumentParser(description="Sequentially standardizes the provided Series or Season based TV show episodes to Plex's preferred naming convention. See https://support.plex.tv/hc/en-us/articles/200220687-Naming-Series-Season-Based-TV-Shows for more.")
-parser.add_argument("-v", "--verbose", required=False, action="store_const", const=True, default=False, help="increase verbosity")
+parser.add_argument("-v", "--verbose", required=False, action="store_const", const=True, default=False, help="increase verbosity (default: False)")
 parser.add_argument("-t", "--title", required=True, action="store", dest="title", metavar="\"Show Title\"", help="title of show to serve as episode base name (e.g. provide \"Cowboy Bebop\" for \"Cowboy Bebop - s01e01.m4v\", etc.)")
 parser.add_argument("-i", "--input", required=True, action="store", dest="inputFiles", nargs='+', metavar=('episode1', 'episode2'), help="list of files or directories to standardize. Directory traversal it not recursive.")
 args = parser.parse_args()
